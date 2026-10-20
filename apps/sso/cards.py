@@ -25,6 +25,7 @@ from apps.utils import convert_mpc_type, help_popover, query_mpc
 from astropy.time import Time
 
 from apps.utils import extract_configuration
+from apps.asteroid3d import asteroid_3d
 
 args = extract_configuration("config.yml")
 APIURL = args["APIURL"]
@@ -306,11 +307,32 @@ curl -H "Content-Type: application/json" -X POST \\
                             ],
                         ),
                     ],
-                    value="sso",
+                    value="sso",   
                 ),
+                dmc.AccordionItem(
+                    [
+                        dmc.AccordionControl(
+                            "3D Model",
+                            icon=[
+                                DashIconify(
+                                    icon="tabler:box",
+                                    color=dmc.DEFAULT_THEME["colors"]["blue"][6],
+                                    width=20,
+                                ),
+                            ],
+                        ),
+                        dmc.AccordionPanel(
+                            asteroid_3d(),
+                            style={"width": "100%", "padding": "0"},
+                        ),
+                    ],
+                    value="3d-model",
+                    id="sso-3d-container",
+                ),
+
                 *extra_items,
             ],
-            value="sso",
+            value=["sso"],
             styles={"content": {"padding": "5px"}},
         )
     else:

@@ -49,7 +49,7 @@ from fink_utils.sso.spins import (
     func_hg,
     func_hg1g2,
     func_shg1g2,
-    func_hg12,
+    func_hg12,              
     func_socca,
 )
 from fink_utils.sso.utils import compute_light_travel_correction
@@ -87,6 +87,7 @@ ZTF_BANDS = {
     1: {"label": "g", "color": COLORS_ZTF[0]},
     2: {"label": "r", "color": COLORS_ZTF[1]},
 }
+SOCCA_PARAMS = ["H", "G1", "G2", "alpha0", "delta0", "period", "a_b", "a_c", "phi0"]
 
 
 def make_band_trace(
@@ -3783,6 +3784,7 @@ def draw_sso_lightcurve(pdf) -> dict:
         "layout": layout,
     }
     graph = dcc.Graph(
+        id="sso-lightcurve",
         figure=figure,
         style={
             "width": "100%",
@@ -4087,17 +4089,88 @@ def apply_socca(pdf):
     )
 
     outdic = sanitize_dict(outdic)
+    print(outdic.keys())
+    print(outdic)
     return outdic
+@app.callback(
+    [
+        Output("socca-params", "data"),
+        Output("socca-loading", "children"),
+        Output("socca-lightcurve-results", "children"),
+    ],
+    Input("switch-lightcurve-func", "value"),
+    State("object-sso", "data"),
+    prevent_initial_call=True,
+)
+def compute_socca_from_lightcurve(model, object_sso):
+    """Compute SOCCA parameters from the Lightcurve tab"""
+    if model != "SOCCA" or not object_sso:
+        raise PreventUpdate
 
+    pdf = pd.read_json(io.StringIO(object_sso))
+    if pdf.empty:
+        raise PreventUpdate
+
+    pdf["i:fid"] = pdf["i:fid"].astype(int)
+    outdic = apply_socca(pdf)
+
+    if any(k.startswith("Failed") for k in outdic):
+        return None, "SOCCA fit failed", dbc.Alert(
+            "The fitting procedure could not converge.", color="danger"
+        )
+
+    filters = {1: "g", 2: "r", 3: "i"}
+    filts = np.unique(pdf["i:fid"].to_numpy())
+
+    dd = {"": [filters[f] + " band" for f in filts]}
+    dd.update({param: [""] * len(filts) for param in SOCCA_PARAMS})
+    df_table = pd.DataFrame(dd, index=[filters[f] for f in filts])
+
+    for f in filts:
+        for param in SOCCA_PARAMS:
+            # filter dependent
+            suffix = f"_{f}" if param in ["H", "G1", "G2"] else ""
+            loc = df_table[param].index == filters[f]
+            df_table.loc[loc, param] = "{:.2f} &plusmn; {:.2f}".format(
+                outdic[param + suffix],
+                outdic["err_" + param + suffix],
+            )
+
+    columns = [
+        {"id": c, "name": c, "type": "text", "presentation": "markdown"}
+        for c in df_table.columns
+    ]
+
+    table = dash_table.DataTable(
+        id="lightcurve_table",
+        columns=columns,
+        data=df_table.to_dict("records"),
+        style_as_list_view=True,
+        style_data={"backgroundColor": "rgb(248, 248, 248, .7)"},
+        style_table={"width": "100%", "maxWidth": "100%", "overflowX": "auto"},
+        style_cell={
+            "padding": "5px",
+            "textAlign": "left",
+            "border": "0.5px solid grey",
+        },
+        style_filter={"backgroundColor": "rgb(238, 238, 238, .7)"},
+        style_header={
+            "backgroundColor": "rgb(230, 230, 230)",
+            "fontWeight": "bold",
+        },
+    )
+
+    return outdic, "", dmc.Paper([table])
 
 @app.callback(
     Output("sso_phasecurve", "children"),
     [
         Input("switch-phase-curve-func", "value"),
+        Input("socca-params", "data"),
     ],
     State("object-sso", "data"),
 )
-def draw_sso_phasecurve(switch_func: str, object_sso) -> dict:
+def draw_sso_phasecurve(switch_func: str, socca_params, object_sso) -> dict:
     """Draw SSO object phase curve"""
     pdf = pd.read_json(io.StringIO(object_sso))
     if pdf.empty:
@@ -4108,9 +4181,13 @@ def draw_sso_phasecurve(switch_func: str, object_sso) -> dict:
         return html.Div([html.Br(), dbc.Alert(msg, color="danger")])
 
     if "i:magpsf_red" not in pdf.columns:
-        return dbc.Alert(
-            "No ephemerides available for {}".format(pdf["i:ssnamenr"].to_numpy()[0]),
-            color="danger",
+        return (
+            dbc.Alert(
+                "No ephemerides available for {}".format(
+                    pdf["i:ssnamenr"].to_numpy()[0]
+                ),
+                color="danger",
+            ),
         )
 
     pdf = pdf.sort_values("Phase")
@@ -4139,17 +4216,40 @@ def draw_sso_phasecurve(switch_func: str, object_sso) -> dict:
 
     if switch_func == "SOCCA":
         fitfunc = func_socca
-        params = ["H", "G1", "G2", "alpha0", "delta0", "period", "a_b", "a_c", "phi0"]
+
+        params = [
+            "H",
+            "G1",
+            "G2",
+            "alpha0",
+            "delta0",
+            "period",
+            "a_b",
+            "a_c",
+            "phi0",
+        ]
+
         bounds = None
         p0 = None
+
         phase_funcs = [
             HG1G2._phi1(phase),
             HG1G2._phi2(phase),
             HG1G2._phi3(phase),
             np.deg2rad(pdf["i:ra"].to_numpy()),
             np.deg2rad(pdf["i:dec"].to_numpy()),
-            compute_light_travel_correction(pdf["i:jd"], pdf["Dobs"]),
+            pdf["i:jd"].to_numpy(),
         ]
+
+        if not socca_params:
+            return dbc.Alert(
+                "Please compute SOCCA from the Lightcurve tab first.",
+                color="warning",
+            )
+
+        outdic = socca_params
+    
+
     elif switch_func == "HG1G2":
         fitfunc = func_hg1g2
         params = ["H", "G1", "G2"]
@@ -4204,15 +4304,7 @@ def draw_sso_phasecurve(switch_func: str, object_sso) -> dict:
     layout["title"]["text"] = "Reduced &#967;<sup>2</sup>: "
 
     # Multi-band fit
-    if switch_func == "SOCCA":
-        outdic = apply_socca(pdf)
-        failed = np.sum([i.startswith("Failed") for i in outdic])
-        if failed > 0:
-            return dbc.Alert(
-                "The fitting procedure could not converge: {}.".format(outdic),
-                color="danger",
-            )
-    else:
+    if switch_func != "SOCCA":
         outdic = estimate_sso_params(
             magpsf_red=pdf["i:magpsf_red"].to_numpy(),
             sigmapsf=pdf["i:sigmapsf"].to_numpy(),
@@ -4392,7 +4484,11 @@ def draw_sso_phasecurve(switch_func: str, object_sso) -> dict:
         style_data={
             "backgroundColor": "rgb(248, 248, 248, .7)",
         },
-        style_table={"maxWidth": "100%"},
+        style_table={
+            "width": "100%",
+            "maxWidth": "100%",
+            "overflowX": "auto",
+        },
         style_cell={
             "padding": "5px",
             "textAlign": "left",

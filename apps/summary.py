@@ -49,7 +49,7 @@ from apps.observability.cards import card_explanation_observability
 from apps.observability.utils import additional_observatories
 
 dcc.Location(id="url", refresh=False)
-
+SSO_MODELS = ["SOCCA", "SHG1G2", "sfHG1G2", "HG1G2", "HG12", "HG"]
 
 def tab1_content(pdf):
     """Summary tab"""
@@ -224,7 +224,9 @@ def tab3_content():
 )
 def tab5_content(object_soo):
     """SSO tab"""
+
     pdf = pd.read_json(io.StringIO(object_soo))
+
     if pdf.empty:
         ssnamenr = "null"
         sso_name = "null"
@@ -236,13 +238,41 @@ def tab5_content(object_soo):
     Alert data from ZTF (filled circle) in g (blue) and r (orange) filters, with ephemerides provided by the
     [Miriade ephemeride service](https://ssp.imcce.fr/webservices/miriade/api/ephemcc/) (shaded circle).
     """
+    
     tab1 = dbc.Row(
         [
             dbc.Col(
                 [
                     dmc.Space(h=10),
-                    draw_sso_lightcurve(pdf),
+                    dcc.Loading(
+                        html.Div(
+                            [
+                                draw_sso_lightcurve(pdf),
+                                html.Div(id="socca-loading"),
+                            ]
+                        ),
+                        color="orange",
+                        type="circle",
+                        overlay_style={"visibility": "visible", "filter": "blur(2px)"},
+                    ),
                     html.Br(),
+                    dmc.Stack(
+                        [
+                            dmc.RadioGroup(
+                                children=dmc.Group(
+                                    [dmc.Radio(k, value=k, color="orange") for k in SSO_MODELS]
+                                ),
+                                id="switch-lightcurve-func",
+                                value="HG1G2",
+                                size="sm",
+                            ),
+                        ],
+                        align="center",
+                        justify="center",
+                    ),
+                    dmc.Space(h=10),
+                    html.Div(id="socca-lightcurve-results"),
+                    dmc.Space(h=10),
                     dmc.Accordion(
                         children=[
                             dmc.AccordionItem(
@@ -341,17 +371,7 @@ def tab5_content(object_soo):
                         [
                             dmc.RadioGroup(
                                 children=dmc.Group(
-                                    [
-                                        dmc.Radio(k, value=k, color="orange")
-                                        for k in [
-                                            "SOCCA",
-                                            "SHG1G2",
-                                            "sfHG1G2",
-                                            "HG1G2",
-                                            "HG12",
-                                            "HG",
-                                        ]
-                                    ]
+                                    [dmc.Radio(k, value=k, color="orange") for k in SSO_MODELS]
                                 ),
                                 id="switch-phase-curve-func",
                                 value="HG1G2",
@@ -389,6 +409,7 @@ def tab5_content(object_soo):
         ],
     )
 
+
     if ssnamenr != "null":
         left_side = dmc.Tabs(
             [
@@ -404,6 +425,7 @@ def tab5_content(object_soo):
                 dmc.TabsPanel(tab3, value="Phase curve"),
             ],
             value="Lightcurve",
+            id="sso-tabs",
         )
     else:
         msg = """
@@ -416,6 +438,7 @@ def tab5_content(object_soo):
 
     tab5_content_ = dbc.Row(
         [
+            dcc.Store(id="socca-params"),
             dmc.Space(h=10),
             dbc.Col(
                 left_side,
@@ -430,7 +453,17 @@ def tab5_content(object_soo):
         ],
         className="g-1",
     )
+
     return tab5_content_
+
+
+@app.callback(
+    Output("sso-3d-container", "style"),
+    Input("sso-tabs", "value"),
+)
+def show_3d_only_for_lightcurve(selected_tab):
+    """Show the 3D model only on the Lightcurve tab"""
+    return {"display": "block" if selected_tab == "Lightcurve" else "none"}
 
 
 @app.callback(
